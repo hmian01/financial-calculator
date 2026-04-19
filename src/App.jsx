@@ -443,12 +443,11 @@ function App() {
     }
 
     return {
-      pv: formatField('pv', result.completed.pv),
-      fv: formatField('fv', result.completed.fv),
-      rate: formatField('rate', result.completed.rate),
-      periods: formatField('periods', result.completed.periods),
-      payment: formatField('payment', result.completed.payment),
-      paymentGrowth: formatField('paymentGrowth', result.completed.paymentGrowth),
+      solvedLabel: FIELD_META[result.missingKey].label,
+      solvedValue: formatField(
+        result.missingKey,
+        result.completed[result.missingKey],
+      ),
     }
   }, [result])
 
@@ -462,6 +461,8 @@ function App() {
       ...previous,
       [key]: formattedValue,
     }))
+    setResult(null)
+    setError('')
   }
 
   function handleCalculate(event) {
@@ -495,163 +496,143 @@ function App() {
   return (
     <main className="page">
       <section className="card">
-        <h1>TVM Calculator</h1>
+        <h1>Financial Calculator</h1>
         <p className="intro">
           Fill any 3 core fields (PV, FV, rate, periods) and leave 1 blank to solve it,
           or fill all 4 core fields to solve the required payment (PMT). Payment inputs
           support optional growth.
         </p>
 
-        <form className="form" onSubmit={handleCalculate}>
-          <div className="field-groups">
-            <div className="field-group">
-              <h3 className="group-title">Required Fields</h3>
-              <p className="group-hint">
-                Enter any 3 and leave 1 blank, or fill all 4 to solve PMT.
-              </p>
+        <div className="calc-layout">
+          <div className="input-pane">
+            <form className="form" onSubmit={handleCalculate}>
+              <div className="field-groups">
+                <div className="field-group">
+                  <h3 className="group-title">Required Fields</h3>
+                  <p className="group-hint">
+                    Enter any 3 and leave 1 blank, or fill all 4 to solve PMT.
+                  </p>
 
-              <div className="form-grid">
-                <label htmlFor="pv">Present Value (PV)</label>
-                <div className="field">
-                  <span className="prefix">$</span>
-                  <input
-                    id="pv"
-                    inputMode="decimal"
-                    type="text"
-                    placeholder="Leave blank to solve"
-                    value={values.pv}
-                    onChange={(event) => updateField('pv', event.target.value)}
-                  />
+                  <div className="form-grid">
+                    <label htmlFor="pv">Present Value (PV)</label>
+                    <div className="field">
+                      <span className="prefix">$</span>
+                      <input
+                        id="pv"
+                        inputMode="decimal"
+                        type="text"
+                        placeholder="Leave blank to solve"
+                        value={values.pv}
+                        onChange={(event) => updateField('pv', event.target.value)}
+                      />
+                    </div>
+
+                    <label htmlFor="fv">Future Value (FV)</label>
+                    <div className="field">
+                      <span className="prefix">$</span>
+                      <input
+                        id="fv"
+                        inputMode="decimal"
+                        type="text"
+                        placeholder="Leave blank to solve"
+                        value={values.fv}
+                        onChange={(event) => updateField('fv', event.target.value)}
+                      />
+                    </div>
+
+                    <label htmlFor="rate">Periodic Rate (r)</label>
+                    <div className="field">
+                      <input
+                        id="rate"
+                        inputMode="decimal"
+                        type="text"
+                        placeholder="Leave blank to solve"
+                        value={values.rate}
+                        onChange={(event) => updateField('rate', event.target.value)}
+                      />
+                      <span className="suffix">%</span>
+                    </div>
+
+                    <label htmlFor="periods">Periods (n)</label>
+                    <div className="field">
+                      <input
+                        id="periods"
+                        inputMode="decimal"
+                        type="text"
+                        placeholder="Leave blank to solve"
+                        value={values.periods}
+                        onChange={(event) => updateField('periods', event.target.value)}
+                      />
+                    </div>
+                  </div>
                 </div>
 
-                <label htmlFor="fv">Future Value (FV)</label>
-                <div className="field">
-                  <span className="prefix">$</span>
-                  <input
-                    id="fv"
-                    inputMode="decimal"
-                    type="text"
-                    placeholder="Leave blank to solve"
-                    value={values.fv}
-                    onChange={(event) => updateField('fv', event.target.value)}
-                  />
-                </div>
+                <div className="field-group optional">
+                  <h3 className="group-title">Optional Fields</h3>
+                  <p className="group-hint">Defaults to 0 when blank.</p>
 
-                <label htmlFor="rate">Periodic Rate (r)</label>
-                <div className="field">
-                  <input
-                    id="rate"
-                    inputMode="decimal"
-                    type="text"
-                    placeholder="Leave blank to solve"
-                    value={values.rate}
-                    onChange={(event) => updateField('rate', event.target.value)}
-                  />
-                  <span className="suffix">%</span>
-                </div>
+                  <div className="form-grid">
+                    <label htmlFor="payment">Payment per Period (PMT)</label>
+                    <div className="field">
+                      <span className="prefix">$</span>
+                      <input
+                        id="payment"
+                        inputMode="decimal"
+                        type="text"
+                        placeholder="Optional (defaults to 0)"
+                        value={values.payment}
+                        onChange={(event) => updateField('payment', event.target.value)}
+                      />
+                    </div>
 
-                <label htmlFor="periods">Periods (n)</label>
-                <div className="field">
-                  <input
-                    id="periods"
-                    inputMode="decimal"
-                    type="text"
-                    placeholder="Leave blank to solve"
-                    value={values.periods}
-                    onChange={(event) => updateField('periods', event.target.value)}
-                  />
+                    <label htmlFor="paymentGrowth">Payment Growth (g)</label>
+                    <div className="field">
+                      <input
+                        id="paymentGrowth"
+                        inputMode="decimal"
+                        type="text"
+                        placeholder="Optional (defaults to 0)"
+                        value={values.paymentGrowth}
+                        onChange={(event) =>
+                          updateField('paymentGrowth', event.target.value)
+                        }
+                      />
+                      <span className="suffix">%</span>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="field-group optional">
-              <h3 className="group-title">Optional Fields</h3>
-              <p className="group-hint">Defaults to 0 when blank.</p>
-
-              <div className="form-grid">
-                <label htmlFor="payment">Payment per Period (PMT)</label>
-                <div className="field">
-                  <span className="prefix">$</span>
-                  <input
-                    id="payment"
-                    inputMode="decimal"
-                    type="text"
-                    placeholder="Optional (defaults to 0)"
-                    value={values.payment}
-                    onChange={(event) => updateField('payment', event.target.value)}
-                  />
-                </div>
-
-                <label htmlFor="paymentGrowth">Payment Growth (g)</label>
-                <div className="field">
-                  <input
-                    id="paymentGrowth"
-                    inputMode="decimal"
-                    type="text"
-                    placeholder="Optional (defaults to 0)"
-                    value={values.paymentGrowth}
-                    onChange={(event) =>
-                      updateField('paymentGrowth', event.target.value)
-                    }
-                  />
-                  <span className="suffix">%</span>
-                </div>
+              <div className="actions">
+                <button type="submit">Calculate Missing Field</button>
+                <button type="button" className="secondary" onClick={handleClear}>
+                  Clear
+                </button>
               </div>
-            </div>
+            </form>
+
+            {error && <p className="error">{error}</p>}
           </div>
 
-          <div className="actions">
-            <button type="submit">Calculate Missing Field</button>
-            <button type="button" className="secondary" onClick={handleClear}>
-              Clear
-            </button>
-          </div>
-        </form>
-
-        {error && <p className="error">{error}</p>}
-
-        {formattedResult && (
-          <section className="result" aria-live="polite">
+          <aside className="result-panel" aria-live="polite">
             <h2>Output</h2>
-            <p className="solved-for">Solved: {FIELD_META[result.missingKey].label}</p>
-            <dl>
-              <div>
-                <dt>Present Value</dt>
-                <dd className={result.missingKey === 'pv' ? 'highlight' : ''}>
-                  {formattedResult.pv}
-                </dd>
-              </div>
-              <div>
-                <dt>Future Value</dt>
-                <dd className={result.missingKey === 'fv' ? 'highlight' : ''}>
-                  {formattedResult.fv}
-                </dd>
-              </div>
-              <div>
-                <dt>Periodic Rate</dt>
-                <dd className={result.missingKey === 'rate' ? 'highlight' : ''}>
-                  {formattedResult.rate}
-                </dd>
-              </div>
-              <div>
-                <dt>Periods</dt>
-                <dd className={result.missingKey === 'periods' ? 'highlight' : ''}>
-                  {formattedResult.periods}
-                </dd>
-              </div>
-              <div>
-                <dt>Payment per Period</dt>
-                <dd className={result.missingKey === 'payment' ? 'highlight' : ''}>
-                  {formattedResult.payment}
-                </dd>
-              </div>
-              <div>
-                <dt>Payment Growth</dt>
-                <dd>{formattedResult.paymentGrowth}</dd>
-              </div>
-            </dl>
-          </section>
-        )}
+            {!formattedResult ? (
+              <p className="result-placeholder">
+                Run a calculation to see all computed values here.
+              </p>
+            ) : (
+              <>
+                <p className="solved-for">Computed Field</p>
+                <dl className="result-list">
+                  <div>
+                    <dt>{formattedResult.solvedLabel}</dt>
+                    <dd className="highlight">{formattedResult.solvedValue}</dd>
+                  </div>
+                </dl>
+              </>
+            )}
+          </aside>
+        </div>
       </section>
     </main>
   )
