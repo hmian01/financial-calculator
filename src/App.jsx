@@ -28,12 +28,49 @@ const PERCENT_FORMATTER = new Intl.NumberFormat('en-US', {
 })
 
 function parseField(value) {
-  if (value.trim() === '') {
+  const normalized = value.replace(/,/g, '').trim()
+
+  if (normalized === '') {
     return null
   }
 
-  const parsed = Number(value)
+  const parsed = Number(normalized)
   return Number.isFinite(parsed) ? parsed : Number.NaN
+}
+
+function formatInputNumber(value) {
+  const normalized = value.replace(/,/g, '').trim()
+
+  if (normalized === '') {
+    return ''
+  }
+
+  if (normalized === '-') {
+    return '-'
+  }
+
+  if (!/^-?\d*\.?\d*$/.test(normalized)) {
+    return null
+  }
+
+  const sign = normalized.startsWith('-') ? '-' : ''
+  const unsigned = sign ? normalized.slice(1) : normalized
+  const hasDecimal = unsigned.includes('.')
+  const [integerPart, decimalPart = ''] = unsigned.split('.')
+  const numericInteger = integerPart === '' ? 0 : Number(integerPart)
+  const formattedInteger = Number.isFinite(numericInteger)
+    ? numericInteger.toLocaleString('en-US')
+    : null
+
+  if (formattedInteger === null) {
+    return null
+  }
+
+  if (!hasDecimal) {
+    return `${sign}${formattedInteger}`
+  }
+
+  return `${sign}${formattedInteger}.${decimalPart}`
 }
 
 function formatField(key, value) {
@@ -393,9 +430,14 @@ function App() {
   }, [result])
 
   function updateField(key, nextValue) {
+    const formattedValue = formatInputNumber(nextValue)
+    if (formattedValue === null) {
+      return
+    }
+
     setValues((previous) => ({
       ...previous,
-      [key]: nextValue,
+      [key]: formattedValue,
     }))
   }
 
