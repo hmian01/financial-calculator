@@ -112,15 +112,11 @@ function solveMissingField(values) {
     return { error: 'Enter at least 3 fields. Leave only one field blank to solve it.' }
   }
 
-  if (missing.length === 0) {
-    return { error: 'All 4 fields are filled. Clear one field to calculate it.' }
-  }
-
   const EPSILON = 1e-10
   const payment = parsed.payment ?? 0
   const paymentGrowthPercent = parsed.paymentGrowth ?? 0
   const paymentGrowthDecimal = paymentGrowthPercent / 100
-  const missingKey = missing[0]
+  const missingKey = missing.length === 0 ? 'payment' : missing[0]
   const pv = parsed.pv
   const fv = parsed.fv
   const ratePercent = parsed.rate
@@ -382,7 +378,34 @@ function solveMissingField(values) {
     solved = solvedPeriods
   }
 
-  if (!Number.isFinite(solved) || solved <= 0) {
+  if (missingKey === 'payment') {
+    if (rateDecimal <= -1) {
+      return { error: 'Rate must be greater than -100% when solving Payment.' }
+    }
+
+    const pvLeg = pv * Math.pow(1 + rateDecimal, n)
+    const target = fv - pvLeg
+    let factor
+
+    if (Math.abs(rateDecimal - paymentGrowthDecimal) < EPSILON) {
+      factor = n * Math.pow(1 + rateDecimal, n - 1)
+    } else {
+      const rateFactor = Math.pow(1 + rateDecimal, n)
+      const growthFactor = Math.pow(1 + paymentGrowthDecimal, n)
+      factor = (rateFactor - growthFactor) / (rateDecimal - paymentGrowthDecimal)
+    }
+
+    if (Math.abs(factor) < EPSILON) {
+      if (Math.abs(target) < EPSILON) {
+        return { error: 'Payment is not uniquely determined for this input combination.' }
+      }
+      return { error: 'No payment value can satisfy this input combination.' }
+    }
+
+    solved = target / factor
+  }
+
+  if (!Number.isFinite(solved) || (missingKey === 'periods' && solved <= 0)) {
     return {
       error:
         'No real solution with this combination. Check signs and values, then try again.',
@@ -474,15 +497,18 @@ function App() {
       <section className="card">
         <h1>TVM Calculator</h1>
         <p className="intro">
-          Fill any 3 core fields (PV, FV, rate, periods), leave 1 core field blank to
-          solve it, and optionally add payment inputs (PMT and payment growth).
+          Fill any 3 core fields (PV, FV, rate, periods) and leave 1 blank to solve it,
+          or fill all 4 core fields to solve the required payment (PMT). Payment inputs
+          support optional growth.
         </p>
 
         <form className="form" onSubmit={handleCalculate}>
           <div className="field-groups">
             <div className="field-group">
               <h3 className="group-title">Required Fields</h3>
-              <p className="group-hint">Enter any 3 and leave 1 blank to solve.</p>
+              <p className="group-hint">
+                Enter any 3 and leave 1 blank, or fill all 4 to solve PMT.
+              </p>
 
               <div className="form-grid">
                 <label htmlFor="pv">Present Value (PV)</label>
@@ -615,7 +641,9 @@ function App() {
               </div>
               <div>
                 <dt>Payment per Period</dt>
-                <dd>{formattedResult.payment}</dd>
+                <dd className={result.missingKey === 'payment' ? 'highlight' : ''}>
+                  {formattedResult.payment}
+                </dd>
               </div>
               <div>
                 <dt>Payment Growth</dt>
