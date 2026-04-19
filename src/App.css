@@ -28,6 +28,39 @@ h1 {
 
 .form {
   display: grid;
+  gap: 14px;
+}
+
+.field-groups {
+  display: grid;
+  gap: 14px;
+}
+
+.field-group {
+  border: 1px solid #d0d7e2;
+  border-radius: 10px;
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.field-group.optional {
+  border-style: dashed;
+}
+
+.group-title {
+  margin: 0;
+  font-size: 1rem;
+  color: #1e293b;
+}
+
+.group-hint {
+  margin: 4px 0 12px;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.form-grid {
+  display: grid;
   grid-template-columns: 220px 1fr;
   gap: 12px;
   align-items: center;
@@ -87,10 +120,9 @@ input:focus {
 }
 
 .actions {
-  grid-column: 1 / -1;
   display: flex;
   gap: 10px;
-  margin-top: 6px;
+  margin-top: 2px;
 }
 
 button {
@@ -177,7 +209,7 @@ button.secondary {
     padding: 16px;
   }
 
-  .form {
+  .form-grid {
     grid-template-columns: 1fr;
   }
 

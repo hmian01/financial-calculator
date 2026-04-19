@@ -7,6 +7,7 @@ const FIELD_META = {
   rate: { label: 'Periodic Rate (r)', suffix: '%' },
   periods: { label: 'Periods (n)', suffix: '' },
   payment: { label: 'Payment per Period (PMT)', suffix: '$' },
+  paymentGrowth: { label: 'Payment Growth (g)', suffix: '%' },
 }
 
 const CURRENCY_FORMATTER = new Intl.NumberFormat('en-US', {
@@ -44,7 +45,7 @@ function formatField(key, value) {
     return CURRENCY_FORMATTER.format(value)
   }
 
-  if (key === 'rate') {
+  if (key === 'rate' || key === 'paymentGrowth') {
     return `${PERCENT_FORMATTER.format(value)}%`
   }
 
@@ -52,12 +53,14 @@ function formatField(key, value) {
 }
 
 function solveMissingField(values) {
+  const coreKeys = ['pv', 'fv', 'rate', 'periods']
   const parsed = {
     pv: parseField(values.pv),
     fv: parseField(values.fv),
     rate: parseField(values.rate),
     periods: parseField(values.periods),
     payment: parseField(values.payment),
+    paymentGrowth: parseField(values.paymentGrowth),
   }
 
   for (const [key, value] of Object.entries(parsed)) {
@@ -66,9 +69,7 @@ function solveMissingField(values) {
     }
   }
 
-  const missing = Object.entries(parsed)
-    .filter(([, value]) => value === null)
-    .map(([key]) => key)
+  const missing = coreKeys.filter((key) => parsed[key] === null)
 
   if (missing.length > 1) {
     return { error: 'Enter at least 3 fields. Leave only one field blank to solve it.' }
@@ -80,6 +81,8 @@ function solveMissingField(values) {
 
   const EPSILON = 1e-10
   const payment = parsed.payment ?? 0
+  const paymentGrowthPercent = parsed.paymentGrowth ?? 0
+  const paymentGrowthDecimal = paymentGrowthPercent / 100
   const missingKey = missing[0]
   const pv = parsed.pv
   const fv = parsed.fv
@@ -91,23 +94,50 @@ function solveMissingField(values) {
     return { error: 'Periods (n) must be greater than 0.' }
   }
 
-  const rateDecimal = ratePercent === null ? null : ratePercent / 100
-
-  function futureValueFromInputs(basePV, pmt, rate, periods) {
-    if (Math.abs(rate) < EPSILON) {
-      return basePV + pmt * periods
-    }
-
-    const growth = Math.pow(1 + rate, periods)
-    return basePV * growth + pmt * ((growth - 1) / rate)
+  if (paymentGrowthDecimal <= -1) {
+    return { error: 'Payment Growth must be greater than -100%.' }
   }
 
-  function solveRateByBisection(basePV, pmt, targetFV, periods) {
+  const rateDecimal = ratePercent === null ? null : ratePercent / 100
+
+  function paymentContribution(pmt, rate, paymentGrowthRate, periods) {
+    if (Math.abs(pmt) < EPSILON) {
+      return 0
+    }
+
+    if (Math.abs(rate - paymentGrowthRate) < EPSILON) {
+      return pmt * periods * Math.pow(1 + rate, periods - 1)
+    }
+
+    const rateFactor = Math.pow(1 + rate, periods)
+    const growthFactor = Math.pow(1 + paymentGrowthRate, periods)
+    return pmt * ((rateFactor - growthFactor) / (rate - paymentGrowthRate))
+  }
+
+  function futureValueFromInputs(basePV, pmt, rate, paymentGrowthRate, periods) {
+    if (rate <= -1 || paymentGrowthRate <= -1) {
+      return Number.NaN
+    }
+
+    const pvLeg = basePV * Math.pow(1 + rate, periods)
+    const pmtLeg = paymentContribution(pmt, rate, paymentGrowthRate, periods)
+    return pvLeg + pmtLeg
+  }
+
+  function solveRateByBisection(
+    basePV,
+    pmt,
+    paymentGrowthRate,
+    targetFV,
+    periods,
+  ) {
     const testPoints = [
       -0.9999, -0.9, -0.75, -0.5, -0.25, -0.1, -0.05, -0.01, 0, 0.01, 0.05,
       0.1, 0.25, 0.5, 1, 2, 5, 10,
     ]
-    const fn = (rate) => futureValueFromInputs(basePV, pmt, rate, periods) - targetFV
+
+    const fn = (rate) =>
+      futureValueFromInputs(basePV, pmt, rate, paymentGrowthRate, periods) - targetFV
 
     const zeroValue = fn(0)
     if (Math.abs(zeroValue) < 1e-8) {
@@ -173,6 +203,82 @@ function solveMissingField(values) {
     return (low + high) / 2
   }
 
+  function solvePeriodsByBisection(basePV, pmt, rate, paymentGrowthRate, targetFV) {
+    const testPoints = [
+      1e-6, 0.1, 0.25, 0.5, 1, 2, 3, 5, 8, 10, 15, 20, 30, 40, 50, 75, 100,
+    ]
+
+    const fn = (periods) =>
+      futureValueFromInputs(basePV, pmt, rate, paymentGrowthRate, periods) - targetFV
+
+    let previousN = 0
+    let previousValue = fn(previousN)
+
+    if (!Number.isFinite(previousValue)) {
+      return null
+    }
+
+    if (Math.abs(previousValue) < 1e-8) {
+      return 0
+    }
+
+    let bracket = null
+
+    for (const currentN of testPoints) {
+      const currentValue = fn(currentN)
+      if (!Number.isFinite(currentValue)) {
+        continue
+      }
+
+      if (Math.abs(currentValue) < 1e-8) {
+        return currentN
+      }
+
+      if (previousValue * currentValue < 0) {
+        bracket = [previousN, currentN]
+        break
+      }
+
+      previousN = currentN
+      previousValue = currentValue
+    }
+
+    if (!bracket) {
+      return null
+    }
+
+    let [low, high] = bracket
+    let lowValue = fn(low)
+    let highValue = fn(high)
+
+    for (let i = 0; i < 120; i += 1) {
+      const mid = (low + high) / 2
+      const midValue = fn(mid)
+
+      if (!Number.isFinite(midValue)) {
+        return null
+      }
+
+      if (Math.abs(midValue) < 1e-10) {
+        return mid
+      }
+
+      if (lowValue * midValue < 0) {
+        high = mid
+        highValue = midValue
+      } else {
+        low = mid
+        lowValue = midValue
+      }
+
+      if (Math.abs(high - low) < 1e-12 || Math.abs(highValue - lowValue) < 1e-12) {
+        break
+      }
+    }
+
+    return (low + high) / 2
+  }
+
   let solved
 
   if (missingKey === 'pv') {
@@ -180,12 +286,9 @@ function solveMissingField(values) {
       return { error: 'Rate must be greater than -100% when solving Present Value.' }
     }
 
-    if (Math.abs(rateDecimal) < EPSILON) {
-      solved = fv - payment * n
-    } else {
-      const growth = Math.pow(1 + rateDecimal, n)
-      solved = (fv - payment * ((growth - 1) / rateDecimal)) / growth
-    }
+    const pvGrowth = Math.pow(1 + rateDecimal, n)
+    const pmtLeg = paymentContribution(payment, rateDecimal, paymentGrowthDecimal, n)
+    solved = (fv - pmtLeg) / pvGrowth
   }
 
   if (missingKey === 'fv') {
@@ -193,7 +296,7 @@ function solveMissingField(values) {
       return { error: 'Rate must be greater than -100% when solving Future Value.' }
     }
 
-    solved = futureValueFromInputs(pv, payment, rateDecimal, n)
+    solved = futureValueFromInputs(pv, payment, rateDecimal, paymentGrowthDecimal, n)
   }
 
   if (missingKey === 'rate') {
@@ -203,11 +306,17 @@ function solveMissingField(values) {
       }
     }
 
-    const solvedRate = solveRateByBisection(pv, payment, fv, n)
+    const solvedRate = solveRateByBisection(
+      pv,
+      payment,
+      paymentGrowthDecimal,
+      fv,
+      n,
+    )
+
     if (solvedRate === null) {
       return {
-        error:
-          'Could not solve a real periodic rate with this input combination.',
+        error: 'Could not solve a real periodic rate with this input combination.',
       }
     }
 
@@ -219,37 +328,21 @@ function solveMissingField(values) {
       return { error: 'Rate must be greater than -100% when solving Periods.' }
     }
 
-    if (Math.abs(rateDecimal) < EPSILON) {
-      if (payment === 0) {
-        if (pv === fv) {
-          return {
-            error:
-              'With 0% rate and PMT = 0, periods are not uniquely determined.',
-          }
-        }
-        return { error: 'No solution for periods with 0% rate and PMT = 0.' }
+    const solvedPeriods = solvePeriodsByBisection(
+      pv,
+      payment,
+      rateDecimal,
+      paymentGrowthDecimal,
+      fv,
+    )
+
+    if (solvedPeriods === null) {
+      return {
+        error: 'No real periods solution for this input combination.',
       }
-
-      solved = (fv - pv) / payment
-    } else {
-      const numerator = fv * rateDecimal + payment
-      const denominator = pv * rateDecimal + payment
-
-      if (denominator === 0) {
-        return {
-          error: 'No real periods solution for this input combination.',
-        }
-      }
-
-      const ratio = numerator / denominator
-      if (ratio <= 0) {
-        return {
-          error: 'No real periods solution for this input combination.',
-        }
-      }
-
-      solved = Math.log(ratio) / Math.log(1 + rateDecimal)
     }
+
+    solved = solvedPeriods
   }
 
   if (!Number.isFinite(solved) || solved <= 0) {
@@ -261,6 +354,8 @@ function solveMissingField(values) {
 
   const completed = {
     ...parsed,
+    payment: payment,
+    paymentGrowth: paymentGrowthPercent,
     [missingKey]: solved,
   }
 
@@ -276,7 +371,8 @@ function App() {
     fv: '',
     rate: '',
     periods: '',
-    payment: '',
+    payment: '0',
+    paymentGrowth: '0',
   })
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
@@ -292,6 +388,7 @@ function App() {
       rate: formatField('rate', result.completed.rate),
       periods: formatField('periods', result.completed.periods),
       payment: formatField('payment', result.completed.payment),
+      paymentGrowth: formatField('paymentGrowth', result.completed.paymentGrowth),
     }
   }, [result])
 
@@ -318,7 +415,14 @@ function App() {
   }
 
   function handleClear() {
-    setValues({ pv: '', fv: '', rate: '', periods: '', payment: '' })
+    setValues({
+      pv: '',
+      fv: '',
+      rate: '',
+      periods: '',
+      payment: '0',
+      paymentGrowth: '0',
+    })
     setResult(null)
     setError('')
   }
@@ -329,72 +433,103 @@ function App() {
         <h1>TVM Calculator</h1>
         <p className="intro">
           Fill any 3 core fields (PV, FV, rate, periods), leave 1 core field blank to
-          solve it, and optionally add a constant payment (PMT) per period.
+          solve it, and optionally add payment inputs (PMT and payment growth).
         </p>
 
         <form className="form" onSubmit={handleCalculate}>
-          <label htmlFor="pv">Present Value (PV)</label>
-          <div className="field">
-            <span className="prefix">$</span>
-            <input
-              id="pv"
-              inputMode="decimal"
-              type="text"
-              placeholder="Leave blank to solve"
-              value={values.pv}
-              onChange={(event) => updateField('pv', event.target.value)}
-            />
-          </div>
+          <div className="field-groups">
+            <div className="field-group">
+              <h3 className="group-title">Required Fields</h3>
+              <p className="group-hint">Enter any 3 and leave 1 blank to solve.</p>
 
-          <label htmlFor="fv">Future Value (FV)</label>
-          <div className="field">
-            <span className="prefix">$</span>
-            <input
-              id="fv"
-              inputMode="decimal"
-              type="text"
-              placeholder="Leave blank to solve"
-              value={values.fv}
-              onChange={(event) => updateField('fv', event.target.value)}
-            />
-          </div>
+              <div className="form-grid">
+                <label htmlFor="pv">Present Value (PV)</label>
+                <div className="field">
+                  <span className="prefix">$</span>
+                  <input
+                    id="pv"
+                    inputMode="decimal"
+                    type="text"
+                    placeholder="Leave blank to solve"
+                    value={values.pv}
+                    onChange={(event) => updateField('pv', event.target.value)}
+                  />
+                </div>
 
-          <label htmlFor="rate">Periodic Rate (r)</label>
-          <div className="field">
-            <input
-              id="rate"
-              inputMode="decimal"
-              type="text"
-              placeholder="Leave blank to solve"
-              value={values.rate}
-              onChange={(event) => updateField('rate', event.target.value)}
-            />
-            <span className="suffix">%</span>
-          </div>
+                <label htmlFor="fv">Future Value (FV)</label>
+                <div className="field">
+                  <span className="prefix">$</span>
+                  <input
+                    id="fv"
+                    inputMode="decimal"
+                    type="text"
+                    placeholder="Leave blank to solve"
+                    value={values.fv}
+                    onChange={(event) => updateField('fv', event.target.value)}
+                  />
+                </div>
 
-          <label htmlFor="periods">Periods (n)</label>
-          <div className="field">
-            <input
-              id="periods"
-              inputMode="decimal"
-              type="text"
-              placeholder="Leave blank to solve"
-              value={values.periods}
-              onChange={(event) => updateField('periods', event.target.value)}
-            />
-          </div>
+                <label htmlFor="rate">Periodic Rate (r)</label>
+                <div className="field">
+                  <input
+                    id="rate"
+                    inputMode="decimal"
+                    type="text"
+                    placeholder="Leave blank to solve"
+                    value={values.rate}
+                    onChange={(event) => updateField('rate', event.target.value)}
+                  />
+                  <span className="suffix">%</span>
+                </div>
 
-          <label htmlFor="payment">Payment per Period (PMT) - Optional</label>
-          <div className="field">
-            <span className="prefix">$</span>
-            <input
-              id="payment"
-              inputMode="decimal"
-              type="text"
-              placeholder="Optional (defaults to 0)"
-              value={values.payment}
-              onChange={(event) => updateField('payment', event.target.value)}
-            />
+                <label htmlFor="periods">Periods (n)</label>
+                <div className="field">
+                  <input
+                    id="periods"
+                    inputMode="decimal"
+                    type="text"
+                    placeholder="Leave blank to solve"
+                    value={values.periods}
+                    onChange={(event) => updateField('periods', event.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="field-group optional">
+              <h3 className="group-title">Optional Fields</h3>
+              <p className="group-hint">Defaults to 0 when blank.</p>
+
+              <div className="form-grid">
+                <label htmlFor="payment">Payment per Period (PMT)</label>
+                <div className="field">
+                  <span className="prefix">$</span>
+                  <input
+                    id="payment"
+                    inputMode="decimal"
+                    type="text"
+                    placeholder="Optional (defaults to 0)"
+                    value={values.payment}
+                    onChange={(event) => updateField('payment', event.target.value)}
+                  />
+                </div>
+
+                <label htmlFor="paymentGrowth">Payment Growth (g)</label>
+                <div className="field">
+                  <input
+                    id="paymentGrowth"
+                    inputMode="decimal"
+                    type="text"
+                    placeholder="Optional (defaults to 0)"
+                    value={values.paymentGrowth}
+                    onChange={(event) =>
+                      updateField('paymentGrowth', event.target.value)
+                    }
+                  />
+                  <span className="suffix">%</span>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="actions">
@@ -439,6 +574,10 @@ function App() {
               <div>
                 <dt>Payment per Period</dt>
                 <dd>{formattedResult.payment}</dd>
+              </div>
+              <div>
+                <dt>Payment Growth</dt>
+                <dd>{formattedResult.paymentGrowth}</dd>
               </div>
             </dl>
           </section>
